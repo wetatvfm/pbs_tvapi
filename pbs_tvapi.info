@@ -1,0 +1,9 @@
+name = PBS TV API
+description = PBS TV Schedule API
+package = PBS API
+core = 7.x
+dependencies[] = custom
+
+
+files[] = pbs_tvapi_arraytoxml.php
+

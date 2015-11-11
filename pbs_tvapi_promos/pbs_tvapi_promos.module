@@ -1,0 +1,122 @@
+<?php
+
+ /**
+ * Implements hook_theme().
+ */
+function pbs_tvapi_promos_theme() {
+  return array(
+    'vid_icon_youtube' => array(
+      'variables' => array('video_id_youtube' => NULL),
+    ),
+  );
+}
+
+/**
+ * Database query to get all the episode ids and youtube ids
+ * to match against tv schedule data
+ *
+ * @params
+ *  - $eid = episode id
+ *  - $type = content type
+ *
+ * Pulls data from the 'youtube_promos' content type
+ */
+function pbs_tvapi_promos_get_promos($type = 'youtube_promos') {
+  $promos = &drupal_static(__FUNCTION__);
+  if (!isset($promos)) {
+    if ($cache = cache_get('pbs_tvapi_promos_getpromos_data')) {
+      $promos = $cache->data;
+    }
+    else {
+      // Get promo information from db
+      $result = db_query('SELECT n.nid, y.field_youtube_id_value, e.field_episode_id_value FROM {node} n LEFT JOIN {field_data_field_youtube_id} y ON n.nid = y.entity_id LEFT JOIN {field_data_field_episode_id} e ON n.nid = e.entity_id WHERE n.type = :type', array(':type' => $type));
+
+      // build promos array
+      $promos = array();
+      foreach ($result as $record) {
+        $promos[$record->field_episode_id_value] = $record->field_youtube_id_value;
+      }
+      cache_set('pbs_tvapi_promos_getpromos_data', $promos, 'cache', CACHE_TEMPORARY);
+    }
+  }
+  return $promos;
+}
+
+
+
+/**
+ * Get promo id
+ */
+function pbs_tvapi_promos_getpromo_id($episode = array()) {
+  $promo_id = '';
+  if (isset($episode['show_id']) && !empty($episode['show_id'])) {
+    $promo_id = $episode['show_id'];
+  }
+  elseif (isset($episode['program_id']) && !empty($episode['program_id'])) {
+    $promo_id = $episode['program_id'];
+  }
+
+  return $promo_id;
+}
+
+
+/**
+ * Add promos to episode arrays
+ */
+function pbs_tvapi_promos_add_promo($episode, $promos) {
+ if (isset($episode['promo_id']) && !empty($promos[$episode['promo_id']])) {
+    $episode['youtube_id'] = $promos[$episode['promo_id']];
+  }
+  return $episode;
+}
+
+/**
+ * Implements hook_pbs_tvapi_listings_alter()
+ */
+function pbs_tvapi_promos_pbs_tvapi_listings_alter(&$listings) {
+  // Get YouTube promos for later reference
+  $promos = pbs_tvapi_promos_get_promos();
+
+  foreach ($listings as $n => &$channel) {
+    foreach ($channel['episodes'] as &$episode) {
+      // add the key to select the correct promo
+      $episode['promo_id'] = pbs_tvapi_promos_getpromo_id($episode);
+
+      // check for promos and add to array
+      $episode = pbs_tvapi_promos_add_promo($episode, $promos);
+    }
+  }
+}
+
+/**
+ * Implements template_preprocess_episode_detail
+ */
+function pbs_tvapi_promos_preprocess_episodes_details(&$vars) {
+  foreach ($vars['episodes'] as &$episode) {
+    if (!empty($episode['youtube_id'])) {
+      $youtube_id = array('video_id_youtube' =>  $episode['youtube_id']);
+      $episode['prefix'] = '<div class="video_wrapper">';
+      $episode['prefix'] .= theme('vid_icon_youtube', $youtube_id);
+      $episode['prefix'] .= '</div>';
+    }
+  }
+}
+
+/**
+ * Implements template_preprocess_episodes_single_channel
+ */
+function pbs_tvapi_promos_preprocess_episodes_single_channel(&$vars) {
+  foreach ($vars['episodes'] as &$episode) {
+    if (!empty($episode['youtube_id'])) {
+      $youtube_id = array('video_id_youtube' =>  $episode['youtube_id']);
+      $episode['prefix'] = theme('vid_icon_youtube', $youtube_id);
+    }
+  }
+}
+
+function theme_vid_icon_youtube($variables) {
+  $image = '<img src="/' . drupal_get_path('module', 'pbs_tvapi_promos') . '/images/vid-icon.png" width="23" height="13" alt="Watch a preview" title="Watch a preview" />';
+  $icon = l($image, 'http://www.youtube.com/watch', array('attributes' => array('class' => array('video_preview mfp-iframe')), 'query' => array('v' => $variables['video_id_youtube']), 'html' => true));
+
+  return $icon;
+}
