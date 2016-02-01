@@ -125,7 +125,8 @@ function pbs_tvapi_block_view($delta = '') {
       $block['content'] = pbs_tvapi_blockcontents($delta);
       break;
     case 'schedule_form':
-      $block['content'] = render(drupal_get_form('pbs_tvapi_dailyschedule_form'));
+      $form = drupal_get_form('pbs_tvapi_dailyschedule_form');
+      $block['content'] = render($form);
       break;
   }
   return $block;
