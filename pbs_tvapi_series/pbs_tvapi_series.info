@@ -1,0 +1,7 @@
+name = PBS TV API Series
+description = Generate importable information about TV Series and Programs
+package = PBS API
+core = 7.x
+dependencies[] = pbs_tvapi
+
+files[] = pbs_tvapi_series_arraytoxml.php

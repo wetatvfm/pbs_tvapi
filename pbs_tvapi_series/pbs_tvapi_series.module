@@ -1,0 +1,171 @@
+<?php
+/**
+ * @file
+ * PBS TV API Series module.
+ */
+
+/**
+ * Implements hook_menu().
+ * @see menu_example()
+ */
+function pbs_tvapi_series_menu() {
+
+  $items['admin/config/services/tvschedule_api/series'] = array(
+    'title' => 'Generate the TV series XML file',
+    'page callback' => 'pbs_tvapi_series_generate',
+    'access callback' => TRUE,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_cron().
+ */
+function pbs_tvapi_series_cron() {
+  // Set to a daily interval.
+  $interval = variable_get('pbs_tvapi_series_interval', 60*60*24);
+  // We don't want to act every time cron runs
+  // so keep a time for the next run in a variable.
+
+  if (time() >= variable_get('pbs_tvapi_series_next_execution', 0)) {
+    pbs_tvapi_series_generate();
+    variable_set('pbs_tvapi_series_next_execution', time() + $interval);
+  }
+}
+
+
+/**
+ *
+ * Because the PBS API is slow, we are sending the results to
+ * sites/default/files/xml/series.xml. Otherwise, the importer times out.
+ *
+ */
+
+function pbs_tvapi_series_generate() {
+
+  require_once('pbs_tvapi_series_arraytoxml.php');
+  $scheduledata = '';
+  $listings = array();
+
+  $date = time();
+  $method = 'day';
+  $update_date = $date;
+  for ($days = 1; $days <= 21; $days++) {
+    // pick a day
+    $thisday = date('Ymd', $date);
+
+    $scheduledata = pbs_tvapi_call2($method, $thisday);
+
+    // set up arrays to hold flags for UK or KIDS shows
+    $uk = array();
+    $kids = array();
+
+    // loop through the response
+    foreach ($scheduledata['feeds'] as $i => $feed) {
+
+      foreach ($feed['listings'] as $i => $listing) {
+        // there's no unique identifier, so we need to make one up
+        unset($index); // avoid dupes
+        $index = pbs_tvapi_getindex($listing);
+
+        // if the show airs on UK or KIDS, flag appropriately
+        switch ($feed['short_name']) {
+          case 'WETADT2':
+            $uk[$index][] = TRUE;
+            break;
+          case 'WETADT3':
+            $kids[$index][] = TRUE;
+            break;
+        }
+
+        // populate listings array, using identifier as index
+        if (isset($index) && !empty($index)) {
+          $listings[$index] = $listing;
+          // add index field
+          $listings[$index]['index'] = $index;
+          // add last update date
+          $listings[$index]['last_update'] = $update_date;
+          // add UK flag
+          $listings[$index]['is_uk'] = FALSE;
+          if (isset($uk[$index]) && !empty($uk[$index])) {
+            $listings[$index]['is_uk'] = TRUE;
+          }
+          // add Kids flag
+          $listings[$index]['is_kids'] = FALSE;
+          if (isset($kids[$index]) && !empty($kids[$index])) {
+            $listings[$index]['is_kids'] = TRUE;
+          }
+          // encode entities
+          $listings[$index] = array_map('pbs_tvapi_series_htmlentities', $listings[$index]);
+          // encode amps
+          $listings[$index] = array_map('pbs_tvapi_series_amps', $listings[$index]);
+        }
+      }
+    }
+
+    // increment a day
+    $date = strtotime($thisday . ' +1 day');
+  }
+  // re-index array
+  $listings = array_values($listings);
+
+  //create xml and save a copy to the server so Feeds can
+  //import it without timing out
+  try {
+    $xml = new array2xml('weta_series', 'series');
+    $xml->createNode($listings);
+    $filedata = $xml;
+
+    $path = file_default_scheme() . '://' . '/xml';
+    file_prepare_directory($d = file_default_scheme() . '://' . '/xml', 1);
+    file_prepare_directory($path, 1);
+    file_save_data($filedata, $path . '/series2.xml', FILE_EXISTS_REPLACE);
+  }
+  catch (Exception $e) {
+    print $e->getMessage();
+  }
+}
+
+/**
+ * Stupid function required to deal with encoding errors
+ */
+function pbs_tvapi_series_amps($item) {
+  $item = str_replace('&', '&amp;', $item);
+  return $item;
+}
+
+/**
+ * Function needed to pass htmlentities parameters during array_map
+ */
+function pbs_tvapi_series_htmlentities($item) {
+  if (is_array($item)) {
+    $newitem = array_map('pbs_tvapi_series_htmlentities', $item);
+  }
+  else {
+    //$newitem = htmlentities($item, ENT_QUOTES, 'UTF-8');
+    // entities need to be numeric (not &eacute;)
+    $newitem = preg_replace_callback('/(&#[0-9]+;)/', function($m) { return mb_convert_encoding($m[1], 'UTF-8', 'HTML-ENTITIES'); }, $item);
+  }
+  return $newitem;
+}
+
+/**
+ * Helper function to convert an array to xml
+ */
+function pbs_tvapi_series_array_to_xml($seriesinfo, &$xml_series) {
+    foreach ($seriesinfo as $key => $value) {
+        if (is_array($value)) {
+            if (!is_numeric($key)) {
+              $subnode = $xml_series->addChild($key);
+              pbs_tvapi_series_array_to_xml($value, $subnode);
+            }
+            else {
+              pbs_tvapi_series_array_to_xml($value, $xml_series);
+            }
+        }
+        else {
+            $xml_series->addChild($key, $value);
+        }
+    }
+}

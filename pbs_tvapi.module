@@ -38,12 +38,6 @@ function pbs_tvapi_menu() {
     'expanded' => TRUE,
   );
 
-  $items['pbs/tvapi/series'] = array(
-    'title' => 'WETA TV Series Listing',
-    'page callback' => 'pbs_tvapi_series',
-    'access callback' => TRUE,
-  );
-
   $items['schedule'] = array(
     'title' => 'Schedule',
     'page callback' => 'pbs_tvapi_dailyschedules',
@@ -106,21 +100,6 @@ function pbs_tvapi_get_config() {
   return $config;
 }
 
-
-/**
- * Implements hook_cron().
- */
-function pbs_tvapi_cron() {
-  // Set to a daily interval.
-  $interval = variable_get('pbs_tvapi_interval', 60*60*24);
-  // We don't want to act every time cron runs
-  // so keep a time for the next run in a variable.
-
-  if (time() >= variable_get('pbs_tvapi_next_execution', 0)) {
-    pbs_tvapi_series();
-    variable_set('pbs_tvapi_next_execution', time() + $interval);
-  }
-}
 
 /**
  * Constructs a descriptive page.
@@ -391,19 +370,19 @@ function pbs_tvapi_dailyschedules($thischannel = 'all', $date = NULL, $time = NU
   }
 
   if (!is_numeric($date) || (is_numeric($date) && drupal_strlen($date) != 8)) {
-    $date = date('Ymd', mktime());
+    $date = date('Ymd', time());
   }
 
 
   if (!is_numeric($time) || (is_numeric($time) && $time > 24)) {
-    $date = date('Ymd', mktime());
-    $time = date('H', mktime());
+    $date = date('Ymd', time());
+    $time = date('H', time());
   }
 
   // get the page title
   $title = drupal_get_title();
   // alter the page title to match the schedule's display date
-  $today = date('Ymd', mktime());
+  $today = date('Ymd', time());
   if ($today != $date) {
     $title = $title . ': ' . date('F j, Y', strtotime($date));
     drupal_set_title($title);
@@ -419,8 +398,8 @@ function pbs_tvapi_dailyschedules($thischannel = 'all', $date = NULL, $time = NU
   if (($inputdate <= $windowopen) || ($inputdate >= $windowclose)) {
     $displaydate = date('F j, Y', $inputdate);
     drupal_set_message(t('Schedule data for ' . $displaydate . ' is not currently available.'), 'error');
-    $date = date('Ymd', mktime());
-    $time = date('H', mktime());
+    $date = date('Ymd', time());
+    $time = date('H', time());
   }
 
   // determine if we're in Daylight Savings and set offset accordingly
@@ -1239,8 +1218,8 @@ function pbs_tvapi_ontonight($channel) {
 
   // set the start and end times for primetime
   $date = date('Y-m-d', time());
-  $start = strtotime(date('Y-m-d', mktime()) . 'T20:00:00');
-  $end = strtotime(date('Y-m-d', mktime()) . 'T23:00:00');
+  $start = strtotime(date('Y-m-d', time()) . 'T20:00:00');
+  $end = strtotime(date('Y-m-d', time()) . 'T23:00:00');
 
   $channels = pbs_tvapi_gettoday();
 
@@ -1300,8 +1279,8 @@ function pbs_tvapi_ontonight($channel) {
  */
 function pbs_tvapi_on_now_grid($channel = 'all') {
   $series = pbs_tvapi_series();
-  $date = date('Ymd', mktime());
-  $time = date('H', mktime());
+  $date = date('Ymd', time());
+  $time = date('H', time());
 
   // determine if we're in Daylight Savings and set offset accordingly
   $offset = '05:00';
@@ -1349,7 +1328,7 @@ function pbs_tvapi_on_now_dropdown($feeds) {
 /*
   // set the start time
   $start = time();
-  $date = date('Y-m-d', mktime());
+  $date = date('Y-m-d', time());
 
   // get series
   $series = pbs_tvapi_get_series();
@@ -1691,153 +1670,4 @@ function pbs_tvapi_get_promos($type = 'youtube_promos') {
 /**
  * END PBS / YOUTUBE API BRIDGE FUNCTIONS
  */
-
-
-
-/**
- * BEGIN TV SERIES FEED FUNCTIONS
- */
-
-
-
-/**
- * The simple page callback, mapped to the path 'pbs/tvapi/series'.
- *
- * Because the PBS API is slow, we are sending the results to
- * sites/default/files/xml/series.xml. Otherwise, the importer times out.
- *
- */
-
-function pbs_tvapi_series() {
-
-  require_once('pbs_tvapi_arraytoxml.php');
-  $scheduledata = '';
-  $listings = array();
-
-  $date = mktime();
-  $method = 'day';
-  $update_date = $date;
-  for ($days = 1; $days <= 21; $days++) {
-    // pick a day
-    $thisday = date('Ymd', $date);
-
-    $scheduledata = pbs_tvapi_call2($method, $thisday);
-
-    // set up arrays to hold flags for UK or KIDS shows
-    $uk = array();
-    $kids = array();
-
-    // loop through the response
-    foreach ($scheduledata['feeds'] as $i => $feed) {
-
-      foreach ($feed['listings'] as $i => $listing) {
-        // there's no unique identifier, so we need to make one up
-        unset($index); // avoid dupes
-        $index = pbs_tvapi_getindex($listing);
-
-        // if the show airs on UK or KIDS, flag appropriately
-        switch ($feed['short_name']) {
-          case 'WETADT2':
-            $uk[$index][] = TRUE;
-            break;
-          case 'WETADT3':
-            $kids[$index][] = TRUE;
-            break;
-        }
-
-        // populate listings array, using identifier as index
-        if (isset($index) && !empty($index)) {
-          $listings[$index] = $listing;
-          // add index field
-          $listings[$index]['index'] = $index;
-          // add last update date
-          $listings[$index]['last_update'] = $update_date;
-          // add UK flag
-          $listings[$index]['is_uk'] = FALSE;
-          if (isset($uk[$index]) && !empty($uk[$index])) {
-            $listings[$index]['is_uk'] = TRUE;
-          }
-          // add Kids flag
-          $listings[$index]['is_kids'] = FALSE;
-          if (isset($kids[$index]) && !empty($kids[$index])) {
-            $listings[$index]['is_kids'] = TRUE;
-          }
-          // encode entities
-          $listings[$index] = array_map('pbs_tvapi_htmlentities', $listings[$index]);
-          // encode amps
-          $listings[$index] = array_map('pbs_tvapi_amps', $listings[$index]);
-        }
-      }
-    }
-
-    // increment a day
-    $date = strtotime($thisday . ' +1 day');
-  }
-  // re-index array
-  $listings = array_values($listings);
-
-  //create xml and save a copy to the server so Feeds can
-  //import it without timing out
-  try {
-    $xml = new array2xml('weta_series', 'series');
-    $xml->createNode($listings);
-    $filedata = $xml;
-
-    $path = file_default_scheme() . '://' . '/xml';
-    file_prepare_directory($d = file_default_scheme() . '://' . '/xml', 1);
-    file_prepare_directory($path, 1);
-    file_save_data($filedata, $path . '/series2.xml', FILE_EXISTS_REPLACE);
-  }
-  catch (Exception $e) {
-    print $e->getMessage();
-  }
-}
-
-/**
- * Stupid function required to deal with encoding errors
- */
-function pbs_tvapi_amps($item) {
-  $item = str_replace('&', '&amp;', $item);
-  return $item;
-}
-
-/**
- * Function needed to pass htmlentities parameters during array_map
- */
-function pbs_tvapi_htmlentities($item) {
-  if (is_array($item)) {
-    $newitem = array_map('pbs_tvapi_htmlentities', $item);
-  }
-  else {
-    //$newitem = htmlentities($item, ENT_QUOTES, 'UTF-8');
-    // entities need to be numeric (not &eacute;)
-    $newitem = preg_replace_callback('/(&#[0-9]+;)/', function($m) { return mb_convert_encoding($m[1], 'UTF-8', 'HTML-ENTITIES'); }, $item);
-  }
-  return $newitem;
-}
-
-/**
- * Helper function to convert an array to xml
- */
-function pbs_tvapi_array_to_xml($seriesinfo, &$xml_series) {
-    foreach ($seriesinfo as $key => $value) {
-        if (is_array($value)) {
-            if (!is_numeric($key)) {
-              $subnode = $xml_series->addChild($key);
-              pbs_tvapi_array_to_xml($value, $subnode);
-            }
-            else {
-              pbs_tvapi_array_to_xml($value, $xml_series);
-            }
-        }
-        else {
-            $xml_series->addChild($key, $value);
-        }
-    }
-}
-
-/**
- * END TV SERIES FEED FUNCTIONS
- */
-
 
