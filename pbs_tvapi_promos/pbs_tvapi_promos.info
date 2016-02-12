@@ -3,3 +3,4 @@ description = Promo handling for the PBS TVAPI Schedule
 package = PBS API
 core = 7.x
 dependencies[] = pbs_tvapi
+dependencies[] = pbs_tvapi_displays

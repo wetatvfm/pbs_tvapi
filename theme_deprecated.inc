@@ -1,6 +1,8 @@
 <?php
 /**
+ * @file
  * Deprecated theme functions, stored here for archival purposes.
+ *
  */
 
 /**

@@ -1,0 +1,5 @@
+name = PBS TV API Displays
+description = Displays for TV Schedule information
+package = PBS API
+core = 7.x
+dependencies[] = pbs_tvapi

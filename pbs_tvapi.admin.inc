@@ -8,7 +8,7 @@
 /**
  * Settings form for PBS TV Schedules API.
  */
-function pbs_tvapi_admin_site_settings() {
+function pbs_tvapi_admin_site_settings($form, &$form_state) {
   $form = array();
 
   $form['pbs_tvapi_settings'] = array(
@@ -21,7 +21,7 @@ function pbs_tvapi_admin_site_settings() {
     '#type' => 'textfield',
     '#required' => TRUE,
     '#description' => t('Enter your PBS TV Schedules API key. See the <a href="@documentation">official documentation</a> for instructions on how to request a key.', array('@documentation' => url('https://projects.pbs.org/confluence/display/tvsapi/TV+Schedules+Version+2', array('absolute' => TRUE)))),
-    '#default_value' => variable_get('pbs_tvapi_key'),
+    '#default_value' => variable_get('pbs_tvapi_key', ''),
   );
 
   $form['pbs_tvapi_settings']['pbs_tvapi_callsign'] = array(
@@ -29,7 +29,16 @@ function pbs_tvapi_admin_site_settings() {
     '#type' => 'textfield',
     '#required' => TRUE,
     '#description' => 'Your station\'s callsign (e.g., WETA)',
-    '#default_value' => variable_get('pbs_tvapi_callsign'),
+    '#default_value' => variable_get('pbs_tvapi_callsign', ''),
+  );
+    $form['pbs_tvapi_timeout'] = array(
+    '#title' => 'Time out',
+    '#type' => 'textfield',
+    '#required' => TRUE,
+    '#size' => 5,
+    '#maxlength' => 3,
+    '#description' => 'Number of seconds for the request to wait (default is 15)',
+    '#default_value' => variable_get('pbs_schedule_api_timeout', 15),
   );
 
   return system_settings_form($form);
@@ -40,30 +49,20 @@ function pbs_tvapi_admin_site_settings() {
  */
 function pbs_tvapi_admin_site_settings_validate($form, &$form_state) {
   $values = $form_state['values'];
+
+  // Make sure the timeout is a number
+  if (!is_int((int)$values['pbs_tvapi_timeout'])) {
+    form_set_error('pbs_tvapi_timeout', t('Timeout must be an integer between 1-999'));
+  }
+  elseif ((int)$values['pbs_tvapi_timeout'] < 0 || (int)$values['pbs_tvapi_timeout'] > 999) {
+    form_set_error('pbs_tvapi_timeout', t('Timeout must be an integer between 1-999'));
+  }
+
+  // Validate the key against PBS's schedule API
   $api_key = $values['pbs_tvapi_key'];
   $callsign = $values['pbs_tvapi_callsign'];
 
-  $baseurl = 'http://services.pbs.org/tvss/';
-
-  // callsign should be all lower case
-  $callsign = strtolower($callsign);
-
-  $header = 'X-PBSAUTH: ' . $api_key;
-
-  $opts = array(
-    'http' => array(
-      'method' => 'GET',
-      'header' => $header,
-      'timeout' => 15
-    )
-  );
-  $context = stream_context_create($opts);
-
-  // construct the API request
-  $url = $baseurl . $callsign . '/today/';
-
-  // query the API
-  $response = file_get_contents($url, FALSE, $context);
+  $response = pbs_tvapi_call2('today', '', $api_key, $callsign);
 
   if (!$response) {
     form_set_error('pbs_tvapi_settings', t('Failed to connect to the PBS TV Schedules API with those credentials.'));
@@ -215,7 +214,7 @@ function pbs_tvapi_admin_tests_validate($form, &$form_state) {
     $selectedshow = $values['show_id'];
     $selectedterms = $values['terms'];
 
-    switch($selectedmethod) {
+    switch ($selectedmethod) {
       case 'day':
         if (empty($selecteddate)) {
           $pass = FALSE;
@@ -226,7 +225,8 @@ function pbs_tvapi_admin_tests_validate($form, &$form_state) {
         if (empty($selectedprogram)) {
           $pass = FALSE;
           $message = 'Please enter a Program ID.';
-        } elseif (!is_numeric($selectedprogram)) {
+        }
+        elseif (!is_numeric($selectedprogram)) {
           $pass = FALSE;
           $message = 'The Program ID must be numeric.';
         }
@@ -235,7 +235,8 @@ function pbs_tvapi_admin_tests_validate($form, &$form_state) {
         if (empty($selectedshow)) {
           $pass = FALSE;
           $message = 'Please enter a Show ID.';
-        } else {
+        }
+        else {
           $prefix_options = array(
             'episode',
             'movie',
@@ -288,11 +289,11 @@ function pbs_tvapi_admin_test_submit_driven_callback($form, $form_state) {
     $month = $date['month'];
     $day = $date['day'];
 
-    if (strlen($month) < 2) {
+    if (drupal_strlen($month) < 2) {
       $month = '0' . $month;
     }
 
-    if (strlen($day) < 2) {
+    if (drupal_strlen($day) < 2) {
       $day = '0' . $day;
     }
 
@@ -317,7 +318,7 @@ function pbs_tvapi_admin_test_submit_driven_callback($form, $form_state) {
 
   // alter the form to display the results
   $element = $form['box'];
-  $element['#markup'] = '<pre>' . print_r($output,1) .'</pre>';
+  $element['#markup'] = '<pre>' . print_r($output, 1) . '</pre>';
 
   return $element;
 }

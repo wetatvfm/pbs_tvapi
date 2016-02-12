@@ -1,0 +1,1307 @@
+<?php
+/**
+ * @file
+ * PBS TV API Displays module.
+ */
+
+
+ /**
+  * Include inc files
+  */
+module_load_include('inc', 'pbs_tvapi_displays', 'blocks');
+module_load_include('inc', 'pbs_tvapi_displays', 'theme');
+
+/**
+ * Implements hook_menu().
+ * @see menu_example()
+ */
+function pbs_tvapi_displays_menu() {
+  $items = array();
+
+  $items['schedule'] = array(
+    'title' => 'Schedule',
+    'page callback' => 'pbs_tvapi_displays_dailyschedules',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['schedule/%'] = array(
+    'title' => 'Schedule',
+    'page callback' => 'pbs_tvapi_displays_dailyschedules',
+    'page arguments' => array(1, 2, 3),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+
+/**
+ * DAILY SCHEDULE FUNCTIONS
+ */
+
+/**
+ * Form to navigate daily schedule
+ */
+function pbs_tvapi_displays_dailyschedule_form($form, &$form_state) {
+
+  // set up channel options
+  $channeloptions = array();
+  $channeloptions['all'] = 'All';
+  $channeloptions['WETADT4'] = 'WETA TV 26';
+  $channeloptions['WETADT'] = 'WETA HD';
+  $channeloptions['WETADT2'] = 'WETA UK';
+  $channeloptions['WETADT3'] = 'WETA KIDS';
+
+  // set date options
+  $date = strtotime('now -1 week');
+  $end = strtotime('now +13 days');
+  $today = strtotime('now');
+
+  $dateoptions = array();
+
+  while ($date <= $end) {
+    $dateoptions[date('Ymd', $date)] = date('l, F j', $date);
+    $date = strtotime('+1 day', $date);
+
+  }
+
+  // set up time options
+  $timeoptions = array();
+
+  foreach (range(0, 23) as $fullhour) {
+    $parthour = $fullhour > 12 ? $fullhour - 12 : $fullhour;
+    if ($parthour == 0) {
+      $parthour = 12;
+    }
+    $parthour = $parthour . ':00';
+    $parthour .= $fullhour > 11 ? ' PM' : ' AM';
+    $timeoptions[$fullhour] = $parthour;
+  }
+
+  $selectedchannel = 'all';
+  $selected = date('Ymd', $today);
+  $selectedtime = date('H', $today);
+  if ($selectedtime < 10) {
+    $selectedtime = '0' . $selectedtime;
+  }
+
+  $arg1 = arg(1);
+  $arg2 = arg(2);
+  $arg3 = arg(3);
+  $channelkeys = array_keys($channeloptions);
+  $datekeys = array_keys($dateoptions);
+  $timekeys = array_keys($timeoptions);
+
+  if (!empty($arg1) && !empty($arg2) && in_array(arg(1), $channelkeys) && in_array(arg(2), $datekeys) && in_array(arg(3), $timekeys)) {
+    $selectedchannel = arg(1);
+    $selected = arg(2);
+    $selectedtime = arg(3);
+  }
+
+
+
+  // add class to form
+  $form['#attributes']['class'] = 'schdform';
+
+  // build date select element
+  $form['date_options'] = array(
+    '#type' => 'value',
+    '#value' => $dateoptions,
+  );
+  $form['date'] = array(
+    '#type' => 'select',
+    '#title' => t('Date'),
+    '#name' => 'date',
+    '#id' => 'datepick',
+    '#field_prefix' => '<div class="select_menu_wrap select_menu_wrap_date">',
+    '#field_suffix' => '</div>',
+    '#options' => $form['date_options']['#value'],
+    '#default_value' => $selected,
+  );
+
+  // build time select element
+  $form['time_options'] = array(
+    '#type' => 'value',
+    '#value' => $timeoptions,
+  );
+
+  $form['time'] = array(
+    '#type' => 'select',
+    '#title' => t('Time'),
+    '#name' => 'time',
+    '#id' => 'timepick',
+    '#field_prefix' => '<div class="select_menu_wrap">',
+    '#field_suffix' => '</div>',
+    '#options' => $form['time_options']['#value'],
+    '#default_value' => $selectedtime,
+  );
+
+  // build channel select element
+  $form['channel_options'] = array(
+    '#type' => 'value',
+    '#value' => $channeloptions,
+  );
+
+  $form['channel'] = array(
+    '#type' => 'select',
+    '#title' => t('Channel'),
+    '#name' => 'channel',
+    '#id' => 'channelpick',
+    '#field_prefix' => '<div class="select_menu_wrap">',
+    '#field_suffix' => '</div>',
+    '#options' => $form['channel_options']['#value'],
+    '#default_value' => $selectedchannel,
+  );
+
+  // build submit button
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Go'),
+    '#prefix' => '<div class="form-item">',
+    '#suffix' => '</div>',
+    '#attributes' => array('class' => array('button')),
+  );
+
+  return $form;
+
+}
+
+/**
+ * Submit handler for daily schedule form
+ */
+
+function pbs_tvapi_displays_dailyschedule_form_submit($form, &$form_state) {
+  $form_state['redirect'] = 'schedule/' . $form_state['input']['channel'] . '/' . $form_state['input']['date'] . '/' . $form_state['input']['time'];
+}
+
+
+/**
+ * Pulls the daily schedule based on the date and time arguments passed in the URL.
+ *
+ * This callback is mapped to the path 'schedule/%/%/%'. If no arguments,
+ * it defaults to today and now.
+ *
+ */
+function pbs_tvapi_displays_dailyschedules($thischannel = 'all', $date = NULL, $time = NULL) {
+
+  // Make sure you don't trust the URL to be safe! Always check for exploits.
+  $channeloptions = array('all', 'WETADT4', 'WETADT', 'WETADT2', 'WETADT3');
+  if (!in_array($thischannel, $channeloptions)) {
+    $thischannel = 'all';
+  }
+
+  if (!is_numeric($date) || (is_numeric($date) && drupal_strlen($date) != 8)) {
+    $date = date('Ymd', time());
+  }
+
+
+  if (!is_numeric($time) || (is_numeric($time) && $time > 24)) {
+    $date = date('Ymd', time());
+    $time = date('H', time());
+  }
+
+  // get the page title
+  $title = drupal_get_title();
+  // alter the page title to match the schedule's display date
+  $today = date('Ymd', time());
+  if ($today != $date) {
+    $title = $title . ': ' . date('F j, Y', strtotime($date));
+    drupal_set_title($title);
+  }
+
+  // set our window of available dates
+  $windowopen = strtotime('now -1 week midnight');
+  $windowclose = strtotime('now +2 weeks');
+  $inputdate = strtotime($date);
+
+  $error = '';
+  // if we're NOT within the window:
+  if (($inputdate <= $windowopen) || ($inputdate >= $windowclose)) {
+    $displaydate = date('F j, Y', $inputdate);
+    drupal_set_message(t('Schedule data for @displaydate is not currently available.', array('@displaydate' => $displaydate)), 'error');
+    $date = date('Ymd', time());
+    $time = date('H', time());
+  }
+
+  // determine if we're in Daylight Savings and set offset accordingly
+  // so the start and end times will be correct
+  $date_time = strtotime(date('Y-m-d', strtotime($date)) . 'T' . $time . ':00:00');
+  $offset = '05:00';
+  $offset_seconds = 18000;
+  $dst = date('I', $date_time);
+  if ($dst == 1) {
+    $offset = '04:00';
+    $offset_seconds = 14400;
+  }
+
+  // set the start and end times
+  $hour = $time . ':00:00-' . $offset;
+  $start = strtotime(date('Y-m-d', strtotime($date)) . 'T' . $hour);
+  // end 24 hours later.
+  $end = $start + 86400;
+
+  $apidate = $start;
+  $method = 'day';
+
+  $listings = array();
+
+  // loop through two days worth of schedule to get a full 24 hours
+  for ($days = 1; $days <= 2; $days++) {
+    // pick a day
+    $thisday = date('Ymd', $apidate);
+
+    // call the api
+    $scheduledata = pbs_tvapi_call2($method, $thisday);
+
+    // loop through the response
+    foreach ($scheduledata['feeds'] as $i => $feed) {
+      if (!empty($feed['digital_channel'])) {
+        $feed['listings'] = pbs_tvapi_displays_daily_listings($feed['listings'], $thisday);
+
+        if (empty($listings[$feed['short_name']])) {
+          $listings[$feed['short_name']] = $feed;
+        }
+        else {
+          // add 2nd day listings to the array
+          $listings[$feed['short_name']]['listings'] = array_merge($listings[$feed['short_name']]['listings'], $feed['listings']);
+        }
+      }
+
+    }
+
+    // increment a day
+    $apidate = strtotime($thisday . ' +1 day');
+  }
+
+  // filter out only the episodes in the search window
+  $listings = pbs_tvapi_displays_filter_episodes($listings, $start, $end);
+
+  // apply any other listings hooks
+  drupal_alter(array('pbs_tvapi_displays_daily_listings'), $listings);
+
+  // get series information
+  $series = pbs_tvapi_displays_get_series();
+
+  $schedule_display = '';
+
+  // all channels
+  if ($thischannel == 'all') {
+    // Our primary channel (TV 26) is technically WETADT4, so comes last in
+    // the array.  We need to reorder the channels so TV 26 is first.
+    asort($listings);
+    $count = count($listings);
+    $tv26 = array_slice($listings, $offset = $count - 1, $preserve_keys = TRUE);
+    $listings = $tv26 + $listings;
+
+    // set up all the dates needed for the grid
+    $setup = pbs_tvapi_displays_grid_setup($date, $time);
+    $dates = $setup['dates'];
+    $times = $setup['times'];
+    $ds_spring = $setup['ds_spring'];
+    $ds_end = $setup['ds_end'];
+
+
+    // Insert necessary placeholders at the beginning and end of the grid so
+    // it will line up correctly.
+    $listings = pbs_tvapi_displays_grid_fix($listings, $dates, $ds_spring, $ds_end);
+
+    // send to theme for display
+    $variables = array('listings' => $listings, 'dates' => $dates, 'times' => $times, 'series' => $series);
+    $schedule_display = theme_schedule_grid($variables);
+
+  }
+
+  else {
+    $channelepisodes = $listings[$thischannel]['episodes'];
+
+    foreach ($channelepisodes as $i => &$episode) {
+
+      // format the start and end times for display
+      $episode['start_formatted'] = date('g:i A', $episode['starttime']);
+      $episode['end_formatted'] = date('g:i A', $episode['endtime']);
+      $episode['start_formatted_details'] = date('F j, Y', $episode['starttime']) . ' at ' . date('g:i a', $episode['starttime']);
+
+      // safety first
+      $episode['title'] = check_plain($episode['title']);
+      $episode['eptitle'] = check_plain($episode['eptitle']);
+    }
+
+    $channelname = $listings[$thischannel]['full_name'];
+
+    $variables = array('episodes' => $channelepisodes, 'channel' => $channelname, 'series' => $series);
+
+    $schedule_display = theme_single_channel_grid($variables);
+    $error = '';
+  }
+
+  return array('#markup' => $schedule_display);
+}
+
+/**
+ * Edit listings response for daily methods.
+ *
+ * @param $listings: Listings from API
+ * @param $thisday: The day the listings are for
+ */
+function pbs_tvapi_displays_daily_listings($listings, $thisday) {
+
+  foreach ($listings as $n => $listing) {
+    // add a full start date key to the array
+    $fullstart = strtotime($thisday . ' ' . $listing['start_time']);
+    $fullstart_human = date('Y-m-d g:i a', $fullstart);
+    $listings[$n]['full_start'] = $fullstart;
+
+    // add a unique title key to the array
+    $listings[$n]['title_key'] = pbs_tvapi_getindex($listing);
+
+  }
+
+  return $listings;
+}
+
+/**
+ * Filter episodes to just those required by the episodes grid.
+ *
+ * @param $listings: array returned from the API cal
+ * @param $start: timestamp for the start of the grid window
+ * @param $end: timestamp for the end of the grd window
+ *
+ */
+function pbs_tvapi_displays_filter_episodes($listings, $start, $end) {
+  foreach ($listings as $channel) {
+    $filtered_episodes = array();
+
+    foreach ($channel['listings'] as $i => $this_listing) {
+      // if the listing is within the window, add it to the array
+      if ($this_listing['full_start'] >= $start && $this_listing['full_start'] < $end) {
+
+        // add listing to array
+        $filtered_episodes[] = $this_listing;
+      }
+    }
+
+    // trim the episodes array to only items needed for display
+    $listings[$channel['short_name']]['episodes'] = pbs_tvapi_displays_episodes_display($filtered_episodes);
+    unset($listings[$channel['short_name']]['listings']); // clean up
+
+  }
+  return $listings;
+}
+
+
+
+/**
+ * Set up dates and times for the daily grid and account for Daylight Savings
+ * shenanigans.
+ *
+ * @param $date: The start date of the grid
+ * @param $time: The start time of the grid
+ *
+ */
+function pbs_tvapi_displays_grid_setup($date, $time) {
+  $setup = array();
+
+  $dates = array();
+  $dates['grid']['start_formatted'] = date('Y-m-d', strtotime($date)) . 'T' . $time . ':00:00 America/New_York';
+  $dates['grid']['start_stamp'] = strtotime($dates['grid']['start_formatted']);
+  $dates['grid']['end_stamp'] = strtotime($dates['grid']['start_formatted'] . '+ 1 day');
+
+  // Account for Daylight Savings Fall Back 2015
+
+  // wackiness starts at 2am the night before and ends at 1am the day of
+  $ds_start = strtotime('First Sunday Of November ' . date('Y') . ' 02:00:00 -1 day');
+  $ds_end = strtotime('First Sunday Of November ' . date('Y') . ' 01:00:00');
+
+  $ds = FALSE;
+  if ($dates['grid']['start_stamp'] >= $ds_start  && $dates['grid']['start_stamp'] <= $ds_end) {
+    $ds = TRUE;
+  }
+
+  // we need to move the end of the grid an hour earlier, since there are two 2ams.
+  if ($ds) {
+    $dates['grid']['end_stamp'] = strtotime($dates['grid']['start_formatted'] . '+ 23 hours');
+  }
+
+  // Account for Daylight Savings Spring Forward
+  $ds_spring = FALSE;
+  // wackiness starts at 3am the night before and ends at 1am
+  $ds_spring_start = strtotime('Second Sunday Of March ' . date('Y') . ' 03:00:00 -1 day');
+  $ds_spring_end = strtotime('Second Sunday Of March ' . date('Y') . ' 01:00:00');
+
+
+
+  if ($dates['grid']['start_stamp'] >= $ds_spring_start  && $dates['grid']['start_stamp'] <= $ds_spring_end) {
+    $ds_spring = TRUE;
+  }
+
+  // we need to move the end of the grid an hour later, since we're losing 2am
+  if ($ds_spring) {
+    $dates['grid']['end_stamp'] = strtotime($dates['grid']['start_formatted'] . '+ 25 hours');
+  }
+
+  $dates['grid']['end_formatted'] = date('Y-m-d', $dates['grid']['end_stamp']) . 'T' . $time . ':00:00 America/New_York';
+
+  $dates['day'] = date('D', strtotime($date));
+  $dates['menu_date'] = date('M j', strtotime($date));
+
+  $dates['prev'] = date('Ymd', strtotime($date . '- 1 day'));
+  $dates['next'] = date('Ymd', strtotime($date . '+ 1 day'));
+
+  $setup['dates'] = $dates;
+
+  // set up time options
+  $timesegments = array();
+  $after = array();
+  $before = array();
+
+  $start = $time;
+
+  // build time headers in half hour increments
+  foreach (range(0, 23) as $fullhour) {
+    $parthour = $fullhour > 12 ? $fullhour - 12 : $fullhour;
+    if ($parthour == 0) {
+      $parthour = 12;
+    }
+    $halfhour = $parthour . ':30';
+    $parthour = $parthour . ':00';
+
+    $parthour .= $fullhour > 11 ? ' PM' : ' AM';
+    $halfhour .= $fullhour > 11 ? ' PM' : ' AM';
+    if ($fullhour < $start) {
+      //need to move these hours to the end
+      $after[$fullhour] = $parthour;
+      $after[$fullhour . '.5'] = $halfhour;
+    }
+    else {
+      $before[$fullhour] = $parthour;
+      $before[$fullhour . '.5'] = $halfhour;
+    }
+  }
+  // put the list back together
+  $timesegments = $before += $after;
+
+  // Account for Daylight Savings Fall Back
+  if ($ds && $dates['grid']['start_stamp'] != $ds_end) {
+
+    // create an extra 1am and 1:30am to account for daylight savings
+    $ds_segments = array('1.6' => '1:00 AM', '1.7' => '1:30 AM');
+
+    // figure out where the extra 1 am should go
+    $ds_pos = array_search('1.5', array_keys($timesegments));
+
+    // split the array, dropping the final two items
+    $segments_before = array_slice($timesegments, 0, $ds_pos +1, TRUE);
+
+    $segments_after = array_slice($timesegments, $ds_pos + 1, -2, TRUE);
+
+
+    // put the array back together again
+    $timesegments = $segments_before += $ds_segments += $segments_after;
+
+  }
+
+  // Account for Daylight Savings Spring Forward
+  if ($ds_spring) {
+    // remove 2am and 2:30am to account for daylight savings
+    unset($timesegments['2']);
+    unset($timesegments['2.5']);
+  }
+
+
+  $times = array('start' => $time, 'segments' => $timesegments);
+
+  $setup['times'] = $times;
+  $setup['ds_spring'] = $ds_spring;
+  $setup['ds_end'] = $ds_end;
+
+  return $setup;
+}
+
+/**
+ * Fix the grid display by inserting the necessary placeholder
+ *
+ * @param $listings: the listings array
+ * @param $dates: the dates for the grid
+ * @param $ds_spring: boolean for if in Daylight Savings Spring Forward
+ * @param $ds_end: Daylight Savings Fall Back
+ */
+function pbs_tvapi_displays_grid_fix($listings, $dates, $ds_spring = FALSE, $ds_end) {
+  foreach ($listings as $i => &$channel) {
+    if (!empty($channel['episodes'])) {
+      $episodes = $channel['episodes'];
+      $blank_placeholder = array_fill_keys(array_keys($episodes[0]), NULL);
+      // if the first episode doesn't line up with the beginning
+      // of the grid, insert a blank placeholder at the top of the array
+      if (isset($episodes[0]['starttime'])) {
+        $starttime = $episodes[0]['starttime'];
+        if ($starttime != $dates['grid']['start_stamp']) {
+          $difference = ($starttime - $dates['grid']['start_stamp'])/60;
+
+          $placeholder = $blank_placeholder;
+          $placeholder['duration'] = $difference;
+          $placeholder['starttime'] = $dates['grid']['start_stamp'];
+          $placeholder['endtime'] = $episodes[0]['starttime'];
+
+          array_unshift($episodes, $placeholder);
+          $channel['episodes'] = $episodes;
+
+        }
+      }
+      // if the last episode doesn't line up with the end
+      // of the grid, insert a blank placeholder at the end of the array
+      $total_eps = count($episodes);
+      if ($total_eps > 0) {
+        $last_ep = $episodes[$total_eps - 1];
+        $endtime = $last_ep['endtime'];
+        if ($endtime < $dates['grid']['end_stamp']) {
+          $difference  = ($dates['grid']['end_stamp'] - $endtime)/60;
+
+          $placeholder = $blank_placeholder;
+          $placeholder['duration'] = $difference;
+          $placeholder['starttime'] = $last_ep['endtime'];
+          $placeholder['endtime'] = $dates['grid']['end_stamp'];
+
+          $episodes[] = $placeholder;
+          $channel['episodes'] = $episodes;
+        }
+      }
+
+      // if the grid start equals the Daylight Savings Fall Back
+      // remove the first two items and insert a placeholder
+      if ($dates['grid']['start_stamp'] == $ds_end) {
+        $episodes = array_slice($episodes, 2, NULL);
+        $starttime = $episodes[0]['starttime'];
+        if ($starttime != $dates['grid']['start_stamp']) {
+          $difference = ($starttime - $dates['grid']['start_stamp'])/60 - 60;
+
+          $placeholder = $blank_placeholder;
+          $placeholder['duration'] = $difference;
+          $placeholder['starttime'] = $dates['grid']['start_stamp'];
+          $placeholder['endtime'] = $episodes[0]['starttime'];
+
+          array_unshift($episodes, $placeholder);
+        }
+
+        $channel['episodes'] = $episodes;
+      }
+
+      foreach ($channel['episodes'] as $i => &$episode) {
+        if ($ds_spring) {
+          $episode_start_corrected = $episode['starttime'] + 3600;
+          if ($episode_start_corrected >= $dates['grid']['end_stamp']) {
+            unset($channel['episodes'][$i]);
+          }
+
+
+        }
+
+        // pass along channel name
+        $episode['channel'] = $channel['full_name'];
+
+        // width of grid cell
+        $episode['width'] = ($episode['duration'] * 4) - 1;
+
+        // format the start and end times for display
+        $episode['start_formatted'] = date('g:i A', $episode['starttime']);
+        $episode['end_formatted'] = date('g:i A', $episode['endtime']);
+        $episode['start_formatted_details'] = date('F j, Y', $episode['starttime']) . ' at ' . date('g:i a', $episode['starttime']);
+
+        // safety first
+        $episode['title'] = check_plain($episode['title']);
+        $episode['eptitle'] = check_plain($episode['eptitle']);
+
+        // unique id for calling modal details popup
+        $episode['detail_id'] = $channel['short_name'] . '-' . $episode['starttime'];
+
+        // if the episode doesn't start on the hour or half-hour
+        // insert a note with the correct start time
+        $minutes = date('i', $episode['starttime']);
+        $episode['startnote'] = FALSE;
+        if ($minutes != '00' && $minutes != '30') {
+          $episode['startnote'] = TRUE;
+        }
+
+        // if this is the first episode not during the Daylight Savings Fall
+        // Back window, width needs to be set from the grid start, not the
+        // episode start
+        if ($i == 0 && $dates['grid']['start_stamp'] != $ds_end) {
+          $episode['width'] = ((($episode['endtime'] - $dates['grid']['start_stamp']) / 60) * 4) - 1;
+        }
+        // if this is the last episode, width needs to be set from the
+        // grid end, not the episode end
+        if ($i == $total_eps - 1) {
+          $episode['width'] = ((($dates['grid']['end_stamp'] - $episode['starttime']) / 60) * 4) - 1;
+        }
+      }
+    }
+  }
+
+  return $listings;
+
+}
+
+
+/**
+ * Database query to get series info to match against tv schedule data
+ *
+ * Needed in order to form links to series nodes
+ */
+function pbs_tvapi_displays_get_series() {
+  $series = &drupal_static(__FUNCTION__);
+  if (!isset($series)) {
+    if ($cache = cache_get('pbs_tvapi_displays_series_data')) {
+      $series = $cache->data;
+    }
+    else {
+      // Get series information from db
+      $result = db_query('SELECT n.nid, f.field_title_id_value
+      FROM {node} n LEFT JOIN {field_data_field_title_id} f ON n.nid = f.entity_id WHERE n.type = :type', array(':type' => 'tv_series'));
+
+      // build series array to reference later
+      $series = array();
+      foreach ($result as $record) {
+        $series[$record->field_title_id_value] = $record->nid;
+      }
+      cache_set('pbs_tvapi_displays_series_data', $series, 'cache', CACHE_TEMPORARY);
+    }
+  }
+
+  return $series;
+}
+
+
+/**
+ * Loop to set up display of television episodes
+ *
+ */
+function pbs_tvapi_displays_episodes_display($episodes) {
+  $variables = array();
+  $delta = 0;
+
+  foreach ($episodes as $episode) {
+    // for now, make sure we exclude v1 calls
+    if (empty($episode['feed_id'])) {
+    $title = $episode['title'];
+
+    $variables[$delta]['title'] = $title;
+
+    $eptitle = '';
+    if (!empty($episode['episode_title'])) {
+      $eptitle = $episode['episode_title'];
+    }
+
+    $variables[$delta]['eptitle'] = $eptitle;
+
+    $duration = $episode['minutes'];
+    $variables[$delta]['duration'] = $duration;
+
+    $starttime = $episode['full_start'];
+    $endtime = $starttime + ($duration * 60);
+
+    $variables[$delta]['starttime'] = $starttime;
+    $variables[$delta]['endtime'] = $endtime;
+
+    $variables[$delta]['program_id'] = '';
+    if (!empty($episode['program_id'])) {
+      $variables[$delta]['program_id'] = $episode['program_id'];
+    }
+    $variables[$delta]['show_id'] = '';
+    if (!empty($episode['show_id'])) {
+      $variables[$delta]['show_id'] = $episode['show_id'];
+    }
+
+    $variables[$delta]['title_key'] = '';
+    if (!empty($episode['title_key'])) {
+      $variables[$delta]['title_key'] = $episode['title_key'];
+    }
+
+    $variables[$delta]['description'] = '';
+    if (!empty($episode['description'])) {
+      $variables[$delta]['description'] = $episode['description'];
+    }
+
+    $variables[$delta]['episode_description'] = '';
+    if (!empty($episode['episode_description'])) {
+      $variables[$delta]['episode_description'] = $episode['episode_description'];
+    }
+
+    $variables[$delta]['special_warnings'] = '';
+    if (!empty($episode['special_warnings'])) {
+      $variables[$delta]['special_warnings'] = $episode['special_warnings'];
+    }
+
+
+    $delta++;
+  }
+  }
+
+  return $variables;
+}
+
+
+/**
+ * END DAILY SCHEDULE FUNCTIONS
+ */
+
+/**
+ * BEGIN WHAT'S ON FUNCTIONS
+ */
+
+/**
+ * What's On Now widget
+ *
+ * Expects a feed ID to determine the channel
+ */
+function pbs_tvapi_displays_onnow($channel) {
+
+  // Get series information from db and put them in an array for later use
+  $series = pbs_tvapi_displays_get_series();
+
+
+  $date = date('Y-m-d', time());
+  $hour = date('H', time());
+
+  $start = time();
+
+  $method = 'day';
+  $apidate = $start;
+
+  $channels = '';
+  // loop through two days worth of schedule to get a full 24 hours
+  for ($days = 1; $days <= 2; $days++) {
+    // pick a day
+    $thisday = date('Ymd', $apidate);
+
+    $scheduledata = pbs_tvapi_call2($method, $thisday);
+
+    // loop through the response
+    foreach ($scheduledata['feeds'] as $i => $feed) {
+
+      if (!empty($feed['digital_channel'])) {
+        // add a full date to the array
+        $feed['listings'] = pbs_tvapi_displays_daily_listings($feed['listings'], $thisday);
+
+        if (empty($channels[$feed['short_name']])) {
+          $channels[$feed['short_name']] = $feed;
+        }
+        else {
+          // add 2nd day listings to the array
+          $channels[$feed['short_name']]['listings'] = array_merge($channels[$feed['short_name']]['listings'], $feed['listings']);
+        }
+      }
+
+    }
+
+    // increment a day
+    $apidate = strtotime($thisday . ' +1 day');
+  }
+
+  if (!empty($channels)) {
+  //Limit to just 3 episodes for just this channel
+  $count = 0;
+  $prev_episodes = array();
+  $episodes = array();
+  foreach ($channels[$channel]['listings'] as $i => $listing) {
+    // stop after three good episodes
+    if ($count == 3) {
+      break;
+    }
+    $epstart = $listing['full_start'];
+
+    if ($epstart < $start) {
+      $prev_episodes[] = $listing;
+    }
+    elseif ($epstart >= $start) {
+      $episodes[] = $listing;
+      $count++;
+    }
+  }
+
+  // If we're in the middle of an episode, grab the current episode and insert it into the array and bring the total eps back down to 3
+  $first_start = $episodes[0]['full_start'];
+  if ($first_start > $start) {
+    $current_episode = array_pop($prev_episodes);
+    array_unshift($episodes, $current_episode);
+    $episodes = array_slice($episodes, 0, 3);
+  }
+
+  // pretty things up
+  $variables = array();
+  $delta = 0;
+  foreach ($episodes as $episode) {
+    // figure out index
+    $ep_id = pbs_tvapi_getindex($episode);
+
+
+    // set title variable
+    if (!empty($ep_id) && isset($series[$ep_id])) {
+      $title = l($episode['title'], 'node/' . $series[$ep_id]);
+    }
+    else {
+      $title = $episode['title'];
+    }
+    $variables[$delta]['title'] = $title;
+
+    // set episode title variable
+    $eptitle = '';
+    if (isset($episode['episode_title']) && !empty($episode['episode_title'])) {
+      $eptitle = $episode['episode_title'];
+    }
+    //
+    $variables[$delta]['eptitle'] = $eptitle;
+
+    // set start time variable
+    $variables[$delta]['starttime'] = date('g:iA', $episode['full_start']);
+
+    // increase the delta
+    $delta++;
+
+  }
+
+  return theme('widget_list', array('episodes' => $variables));
+  }
+
+}
+/*
+ * What's On Now widget for Kids section
+ *
+ * Expects a feed ID to determine the channel
+ */
+function pbs_tvapi_displays_onnow_kids($channel) {
+
+  // Get series information from db and put them in an array for later use
+  $series = pbs_tvapi_displays_get_series();
+
+  $date = date('Y-m-d', time());
+  $hour = date('H', time());
+
+  $start = time();
+
+  $method = 'day';
+  $apidate = $start;
+
+  $channels = '';
+  // loop through two days worth of schedule to get a full 24 hours
+  for ($days = 1; $days <= 2; $days++) {
+    // pick a day
+    $thisday = date('Ymd', $apidate);
+
+    $scheduledata = pbs_tvapi_call2($method, $thisday);
+
+    // loop through the response
+    foreach ($scheduledata['feeds'] as $i => $feed) {
+
+      if (!empty($feed['digital_channel'])) {
+        // add a full date to the array
+        $feed['listings'] = pbs_tvapi_displays_daily_listings($feed['listings'], $thisday);
+
+        if (empty($channels[$feed['short_name']])) {
+          $channels[$feed['short_name']] = $feed;
+        }
+        else {
+          // add 2nd day listings to the array
+          $channels[$feed['short_name']]['listings'] = array_merge($channels[$feed['short_name']]['listings'], $feed['listings']);
+        }
+      }
+
+    }
+
+    // increment a day
+    $apidate = strtotime($thisday . ' +1 day');
+  }
+
+  if (!empty($channels)) {
+  //Limit to just 3 episodes for just this channel
+  $count = 0;
+  $prev_episodes = array();
+  $episodes = array();
+  foreach ($channels[$channel]['listings'] as $i => $listing) {
+    // stop after three good episodes
+    if ($count == 3) {
+      break;
+    }
+    $epstart = $listing['full_start'];
+
+    if ($epstart < $start) {
+      $prev_episodes[] = $listing;
+    }
+    elseif ($epstart >= $start) {
+      $episodes[] = $listing;
+      $count++;
+    }
+  }
+
+  // If we're in the middle of an episode, grab the current episode and insert it into the array and bring the total eps back down to 3
+  $first_start = $episodes[0]['full_start'];
+  if ($first_start > $start) {
+    $current_episode = array_pop($prev_episodes);
+    array_unshift($episodes, $current_episode);
+    $episodes = array_slice($episodes, 0, 3);
+  }
+
+    // pretty things up
+    $variables = array();
+    $note = NULL;
+    if ($channel == 'WETADT4') {
+      $note = 'WETA TV 26 airs kids programming in the mornings.';
+    }
+    $delta = 0;
+    foreach ($episodes as $episode) {
+      // figure out index
+      $ep_id = pbs_tvapi_getindex($episode);
+
+      // set title variable
+      if (isset($series[$ep_id])) {
+        $title = l($episode['title'], 'node/' . $series[$ep_id]);
+        $series_node = node_load($series[$ep_id]);
+        if (!empty($series_node->field_kids_image)) {
+          // prepare series image, if it exists
+          unset($img_vars);
+          if (isset($series_node->field_kids_image)) {
+            $img_vars = array(
+              'style_name' => 'kids_crop',
+              'path' => $series_node->field_kids_image['und'][0]['uri'],
+              'alt' => strip_tags($episode['title']),
+              'width' => '',
+              'height' => '',
+              'attributes' => array(
+                'class' => 'fltlt',
+              ),
+            );
+          }
+
+          $variables[$delta]['kids_image'] = theme_image_style($img_vars);
+        }
+      }
+      else {
+        $title = $episode['title'];
+      }
+      $variables[$delta]['title'] = $title;
+
+      // set episode title variable
+      $eptitle = '';
+      if (isset($episode['episode_title']) && !empty($episode['episode_title'])) {
+        $eptitle = $episode['episode_title'];
+      }
+      //
+      $variables[$delta]['eptitle'] = $eptitle;
+
+      // set start time variable
+      $variables[$delta]['starttime'] = date('g:iA', $episode['full_start']);
+
+      // increase the delta
+      $delta++;
+
+  }
+
+  return theme('widget_list_kids', array('episodes' => $variables, 'fullsched' => TRUE, 'note' => $note));
+  }
+}
+
+
+/*
+ * What's On Tonight widget
+ *
+ * Expects a feed ID to determine the channel
+ */
+function pbs_tvapi_displays_ontonight($channel) {
+
+
+  // Get series information from db and put them in an array for later use
+  $series = pbs_tvapi_displays_get_series();
+
+
+  // set the start and end times for primetime
+  $date = date('Y-m-d', time());
+  $start = strtotime(date('Y-m-d', time()) . 'T20:00:00');
+  $end = strtotime(date('Y-m-d', time()) . 'T23:00:00');
+
+  $channels = pbs_tvapi_displays_gettoday();
+
+  //Limit to just 4 episodes, if necessary
+  $count = 0;
+  $episodes = array();
+  foreach ($channels[$channel]['listings'] as $i => $listing) {
+    if ($count == 4) {
+      break;
+    }
+    $epstart = strtotime($date . ' ' . $listing['start_time']);
+    $listing['full_start'] = $epstart;
+    if ($epstart >= $start && $epstart <= $end) {
+      $episodes[] = $listing;
+      $count++;
+    }
+  }
+
+  // pretty things up
+  $variables = array();
+  $delta = 0;
+  foreach ($episodes as $episode) {
+    // figure out index
+    $ep_id = pbs_tvapi_getindex($episode);
+
+    // set title variable
+    if (!empty($ep_id) && isset($series[$ep_id])) {
+      $title = l($episode['title'], 'node/' . $series[$ep_id]);
+    }
+    else {
+      $title = $episode['title'];
+    }
+    $variables[$delta]['title'] = $title;
+
+    // set episode title variable
+    $eptitle = '';
+    if (isset($episode['episode_title']) && !empty($episode['episode_title'])) {
+      $eptitle = $episode['episode_title'];
+    }
+    //
+    $variables[$delta]['eptitle'] = $eptitle;
+
+    // set start time variable
+    $variables[$delta]['starttime'] = date('g:iA', $episode['full_start']);
+
+
+    // increase the delta
+    $delta++;
+
+  }
+
+  return theme('widget_list', array('episodes' => $variables));
+}
+
+/**
+ * Get today's listings
+ */
+function pbs_tvapi_displays_gettoday() {
+
+  $listings = &drupal_static(__FUNCTION__);
+  if (!isset($listings)) {
+    if ($cache = cache_get('pbs_tvapi_gettoday_data') && !empty($cache->data)) {
+      $listings = $cache->data;
+    }
+    else {
+
+      // get the listings
+      $method = 'today';
+
+      $raw_listings = pbs_tvapi_call2($method);
+      $listings = array();
+      if (!empty($raw_listings)) {
+        // remove analog listings and reindex using shortname as key
+        foreach ($raw_listings['feeds'] as $i => $listing) {
+          if (!empty($listing['digital_channel'])) {
+            $listings[$listing['short_name']] = $listing;
+          }
+        }
+        cache_set('pbs_tvapi_gettoday_data', $listings, 'cache');
+      }
+    }
+  }
+  return $listings;
+}
+
+
+
+/*
+ * Grid for schedule flyout
+ */
+function pbs_tvapi_displays_on_now_grid($channel = 'all') {
+  $series = pbs_tvapi_displays_get_series();
+  $date = date('Ymd', time());
+  $time = date('H', time());
+
+  // determine if we're in Daylight Savings and set offset accordingly
+  $offset = '05:00';
+  $offset_seconds = 18000;
+  $dst = date('I');
+  if ($dst == 1) {
+    $offset = '04:00';
+    $offset_seconds = 14400;
+  }
+
+    // set the start and end times
+  $hour = $time . ':00:00-' . $offset;
+  $start = strtotime(date('Y-m-d', strtotime($date)) . 'T' . $hour);
+  // end 4 hours later.
+  $end = $start + 14400;
+  // get the feeds
+  $channels = pbs_tvapi_displays_geteps_allfeeds();
+
+  // cycle through the feeds and only keep the episode information
+  // relevant to this grid display
+  if (!empty($channels)) {
+  foreach ($channels as $i => $channel) {
+    $filtered_episodes = array();
+    if (!empty($channel['episodes'])) {
+      foreach ($channel['episodes'] as $n => $episode) {
+        $epstart = strtotime($episode['pbs_start_time']) - $offset_seconds;
+        if ($epstart >= $start && $epstart < $end) {
+          $filtered_episodes[] = $episode;
+        }
+      }
+    }
+    $channels[$i]['episodes'] = $filtered_episodes;
+  }
+
+  return theme('schedule_flyout', array('vars' => $channels, 'date' => $date, 'time' => $time, 'series' => $series));
+  }
+}
+
+/*
+ * What's On Now dropdowns for subnavs
+ *
+ * Expects an array of channel ids.
+ */
+function pbs_tvapi_displays_on_now_dropdown($feeds) {
+/*
+  // set the start time
+  $start = time();
+  $date = date('Y-m-d', time());
+
+  // get series
+  $series = pbs_tvapi_get_series();
+
+  $channels = pbs_tvapi_gettoday();
+
+  if (!empty($channels)) {
+
+    // cycle through the episodes and only keep the information for the current episode
+    $current_eps = array();
+    foreach ($feeds as $i => $feed_id) {
+
+      foreach ($channels[$feed_id]['listings'] as $i => $listing) {
+        $epstart = strtotime($date . ' ' . $listing['start_time']);
+        $listing['full_start'] = $epstart;
+
+        if ($epstart <= $start) {
+          $prev_episodes[] = $listing;
+        }
+        elseif ($epstart > $start) {
+          break;
+        }
+      }
+      $current_ep =  array_pop($prev_episodes);
+      $ep_id = pbs_tvapi_getindex($current_ep);
+      $nid = $series[$ep_id];
+      $current_eps[$i]['episode'] = $current_ep;
+      $current_eps[$i]['episode']['nid'] = $nid;
+
+    }
+
+    return theme('schedule_dropdown', array('vars' => $current_eps));
+  }
+  */
+
+  // removed all processing for performance reasons
+  return theme('schedule_dropdown');
+
+}
+
+/**
+ * END WHAT'S ON FUNCTIONS
+ */
+
+
+/**
+ * BEGIN BY SERIES FUNCTIONS
+ */
+
+/**
+ * Find upcoming episodes by series
+ * $nid = node id
+ */
+function pbs_tvapi_displays_upcomingbyseries($nid) {
+// add node object to static cache
+  $node = &drupal_static(__FUNCTION__);
+  if (!isset($node)) {
+    $node = node_load($nid);
+  }
+
+  // check for whether this is a program or a one-off
+  if (isset($node->field_program_id) && !empty($node->field_program_id)) {
+    $method = 'upcoming/program';
+    $pid = field_get_items('node', $node, 'field_program_id');
+    $pid = field_view_value('node', $node, 'field_program_id', $pid[0]);
+    $pid = str_replace(' ', '', $pid);
+    $param = drupal_render($pid);
+  }
+  elseif (isset($node->field_show_id) && !empty($node->field_show_id)) {
+    $method = 'upcoming/show';
+    $sid = field_get_items('node', $node, 'field_show_id');
+    $sid = field_view_value('node', $node, 'field_show_id', $sid[0]);
+    $sid = str_replace(' ', '', $sid);
+    $param = drupal_render($sid);
+  }
+
+  $scheduledata = pbs_tvapi_call2($method, $param);
+
+  // must normalize results since API isn't consistent in its naming schemes
+  $listings = array();
+  if (isset($scheduledata['upcoming_episodes'])) {
+    $listings = $scheduledata['upcoming_episodes'];
+  }
+  elseif (isset($scheduledata['upcoming_shows'])) {
+    $listings = $scheduledata['upcoming_shows'];
+  }
+
+  $filtered_episodes = pbs_tvapi_displays_upcoming_listings($listings, $node);
+
+  // apply any other listings hooks
+  drupal_alter(array('pbs_tvapi_displays_upcoming_listings'), $filtered_episodes);
+
+  if (isset($filtered_episodes) && !empty($filtered_episodes)) {
+    $initial_display = 5;
+    $variables = array('episodes' => $filtered_episodes, 'initial_display' => $initial_display);
+    return theme_episode_grid($variables);
+  }
+  else {
+    $no_results = module_invoke('pbs_tvapi_displays', 'block_view', 'upcoming_noresults');
+    return render($no_results['content']);
+  }
+
+}
+
+/**
+ * Edit listings response for upcoming methods.
+ *
+ * @param $listings: Listings from API
+ * @param $node: Node object
+ */
+function pbs_tvapi_displays_upcoming_listings($listings, $node) {
+
+  $filtered_episodes = array();
+
+  // we only want the digital channels
+  foreach ($listings as $i => $episode) {
+    if (!empty($episode['feed']['digital_channel'])) {
+
+      // date and time information
+      $start = strtotime($episode['day'] . ' ' . $episode['start_time']);
+      $episode['date_formatted'] = date('D., F j, Y', $start);
+      $episode['time_formatted'] = date('g:i a', $start);
+
+      // if no episode title, display the show title
+      if (empty($episode['episode_title'])) {
+        $episode['episode_title'] = $node->title;
+      }
+
+      // if no episode description, display the show description
+      if (empty($episode['episode_description']) && isset($node->field_description) && !empty($node->field_description)) {
+        $description = field_get_items('node', $node, 'field_description');
+        $description = field_view_value('node', $node, 'field_description', $description[0]);
+        $episode['episode_description'] = drupal_render($description);
+      }
+
+      $filtered_episodes[] = $episode;
+    }
+  }
+
+  return $filtered_episodes;
+}
+
+/**
+ * END BY SERIES FUNCTIONS
+ */
+

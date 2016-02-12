@@ -1,5 +1,24 @@
 <?php
 
+/**
+ * Implements hook_menu().
+ * @see menu_example()
+ */
+function pbs_tvapi_promos_menu() {
+  $items = array();
+
+  // path with autocomplete function for tv series
+  $items['tvseries/autocomplete'] = array(
+    'title' => 'Autocomplete for tv series',
+    'page callback' => 'pbs_tvapi_promos_tvseries_autocomplete',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+    );
+
+  return $items;
+}
+
+
  /**
  * Implements hook_theme().
  */
@@ -8,8 +27,57 @@ function pbs_tvapi_promos_theme() {
     'vid_icon_youtube' => array(
       'variables' => array('video_id_youtube' => NULL),
     ),
+    'vid_icon_cove' => array(
+      'variables' => array('video_id_cove' => NULL),
+    ),
+    // form for finding episode IDs
+    'episode_finder' => array(
+    ),
   );
 }
+
+
+/**
+ * Implements hook_block_info().
+ *
+ * This hook declares what blocks are provided by the module.
+ */
+function pbs_tvapi_promos_block_info() {
+  // This hook returns an array, each component of which is an array of block
+  // information. The array keys are the 'delta' values used in other block
+  // hooks.
+  $blocks['episode_finder'] = array(
+    'info' => t('Episode Finder'),
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ *
+ * This hook generates the contents of the blocks themselves.
+ */
+function pbs_tvapi_promos_block_view($delta = '') {
+  //The $delta parameter tells us which block is being requested.
+  switch ($delta) {
+    case 'episode_finder':
+      $block['content'] = pbs_tvapi_promos_blockcontents($delta);
+      break;
+  }
+  return $block;
+}
+
+/**
+ * A module-defined block content function.
+ */
+function pbs_tvapi_promos_blockcontents($which_block) {
+  switch ($which_block) {
+    case 'episode_finder':
+      $output = theme('episode_finder');
+      return $output;
+  }
+}
+
 
 /**
  * Database query to get all the episode ids and youtube ids
@@ -29,12 +97,24 @@ function pbs_tvapi_promos_get_promos($type = 'youtube_promos') {
     }
     else {
       // Get promo information from db
-      $result = db_query('SELECT n.nid, y.field_youtube_id_value, e.field_episode_id_value FROM {node} n LEFT JOIN {field_data_field_youtube_id} y ON n.nid = y.entity_id LEFT JOIN {field_data_field_episode_id} e ON n.nid = e.entity_id WHERE n.type = :type', array(':type' => $type));
+      $result = db_query('SELECT n.nid, p.field_promo_type_value, c.field_cove_video_id_object_id, y.field_youtube_id_value, e.field_episode_id_value FROM {node} n LEFT JOIN {field_data_field_promo_type} p ON n.nid = p.entity_id LEFT JOIN {field_data_field_cove_video_id} c ON n.nid = c.entity_id LEFT JOIN {field_data_field_youtube_id} y ON n.nid = y.entity_id LEFT JOIN {field_data_field_episode_id} e ON n.nid = e.entity_id WHERE n.type = :type', array(':type' => $type));
 
       // build promos array
       $promos = array();
       foreach ($result as $record) {
-        $promos[$record->field_episode_id_value] = $record->field_youtube_id_value;
+
+        $promos[$record->field_episode_id_value]['type'] = $record->field_promo_type_value;
+        switch ($record->field_promo_type_value) {
+          case 'cove':
+            $promos[$record->field_episode_id_value]['value'] = $record->field_cove_video_id_object_id;
+            $promos[$record->field_episode_id_value]['nid'] = $record->nid;
+            break;
+          case 'youtube':
+            $promos[$record->field_episode_id_value]['value'] = $record->field_youtube_id_value;
+            break;
+          default:
+          break;
+        }
       }
       cache_set('pbs_tvapi_promos_getpromos_data', $promos, 'cache', CACHE_TEMPORARY);
     }
@@ -64,16 +144,27 @@ function pbs_tvapi_promos_getpromo_id($episode = array()) {
  * Add promos to episode arrays
  */
 function pbs_tvapi_promos_add_promo($episode, $promos) {
- if (isset($episode['promo_id']) && !empty($promos[$episode['promo_id']])) {
-    $episode['youtube_id'] = $promos[$episode['promo_id']];
+  if (isset($episode['promo_id']) && !empty($promos[$episode['promo_id']]['type']) && !empty($promos[$episode['promo_id']]['value'])) {
+    switch ($promos[$episode['promo_id']]['type']) {
+      case 'cove':
+        $episode['cove_id'] = $promos[$episode['promo_id']]['value'];
+        $episode['cove_id_node'] = node_load($promos[$episode['promo_id']]['nid']);
+        break;
+      case 'youtube':
+        $episode['youtube_id'] = $promos[$episode['promo_id']]['value'];
+        break;
+      default:
+        break;
+    }
+
   }
   return $episode;
 }
 
 /**
- * Implements hook_pbs_tvapi_listings_alter()
+ * Implements hook_pbs_tvapi_displays_daily_listings_alter().
  */
-function pbs_tvapi_promos_pbs_tvapi_listings_alter(&$listings) {
+function pbs_tvapi_promos_pbs_tvapi_displays_daily_listings_alter(&$listings) {
   // Get YouTube promos for later reference
   $promos = pbs_tvapi_promos_get_promos();
 
@@ -89,10 +180,21 @@ function pbs_tvapi_promos_pbs_tvapi_listings_alter(&$listings) {
 }
 
 /**
- * Implements template_preprocess_episode_detail
+ * Implements template_preprocess_episodes_detail
  */
 function pbs_tvapi_promos_preprocess_episodes_details(&$vars) {
-  foreach ($vars['episodes'] as &$episode) {
+  foreach ($vars['episodes'] as $i => &$episode) {
+    if (!empty($episode['cove_id']) && !empty($episode['cove_id_node'])) {
+      $cove_id = array(
+        'video_id_cove' => $episode['cove_id'],
+        'cove_node' => $episode['cove_id_node'],
+        'count' => $i,
+      );
+      $episode['prefix'] = '<div class="video_wrapper">';
+      $episode['prefix'] .= theme('vid_icon_cove', $cove_id);
+      $episode['prefix'] .= '</div>';
+    }
+
     if (!empty($episode['youtube_id'])) {
       $youtube_id = array('video_id_youtube' =>  $episode['youtube_id']);
       $episode['prefix'] = '<div class="video_wrapper">';
@@ -106,7 +208,60 @@ function pbs_tvapi_promos_preprocess_episodes_details(&$vars) {
  * Implements template_preprocess_episodes_single_channel
  */
 function pbs_tvapi_promos_preprocess_episodes_single_channel(&$vars) {
-  foreach ($vars['episodes'] as &$episode) {
+  foreach ($vars['episodes'] as $i => &$episode) {
+    if (!empty($episode['cove_id']) && !empty($episode['cove_id_node'])) {
+      $cove_id = array(
+        'video_id_cove' => $episode['cove_id'],
+        'cove_node' => $episode['cove_id_node'],
+        'count' => $i,
+      );
+      $episode['prefix'] = theme('vid_icon_cove', $cove_id);
+    }
+
+    if (!empty($episode['youtube_id'])) {
+      $youtube_id = array('video_id_youtube' =>  $episode['youtube_id']);
+      $episode['prefix'] = theme('vid_icon_youtube', $youtube_id);
+    }
+  }
+}
+
+
+/**
+ * Implements hook_pbs_tvapi_displays_upcoming_listings_alter().
+ */
+function pbs_tvapi_promos_pbs_tvapi_displays_upcoming_listings_alter(&$listings) {
+  // Get YouTube promos for later reference
+  $promos = pbs_tvapi_promos_get_promos();
+
+  // we only want the digital channels
+  foreach ($listings as $i => &$episode) {
+    if (!empty($episode['feed']['digital_channel'])) {
+
+      // add the key to select the correct promo
+      $episode['promo_id'] = pbs_tvapi_promos_getpromo_id($episode);
+
+      // check for promos and add to array
+      $episode = pbs_tvapi_promos_add_promo($episode, $promos);
+    }
+  }
+}
+
+
+/**
+ * Implements template_preprocess_episodes_by_series to add icons to
+ * upcoming episode displays if there is a promo
+ */
+function pbs_tvapi_promos_preprocess_episodes_by_series(&$vars) {
+  foreach ($vars['episodes'] as $i => &$episode) {
+    if (!empty($episode['cove_id']) && !empty($episode['cove_id_node'])) {
+      $cove_id = array(
+        'video_id_cove' => $episode['cove_id'],
+        'cove_node' => $episode['cove_id_node'],
+        'count' => $i,
+      );
+      $episode['prefix'] = theme('vid_icon_cove', $cove_id);
+    }
+
     if (!empty($episode['youtube_id'])) {
       $youtube_id = array('video_id_youtube' =>  $episode['youtube_id']);
       $episode['prefix'] = theme('vid_icon_youtube', $youtube_id);
@@ -116,7 +271,207 @@ function pbs_tvapi_promos_preprocess_episodes_single_channel(&$vars) {
 
 function theme_vid_icon_youtube($variables) {
   $image = '<img src="/' . drupal_get_path('module', 'pbs_tvapi_promos') . '/images/vid-icon.png" width="23" height="13" alt="Watch a preview" title="Watch a preview" />';
-  $icon = l($image, 'http://www.youtube.com/watch', array('attributes' => array('class' => array('video_preview mfp-iframe')), 'query' => array('v' => $variables['video_id_youtube']), 'html' => true));
+  $icon = l($image, 'http://www.youtube.com/watch', array('attributes' => array('class' => array('video_preview mfp-iframe')), 'query' => array('v' => $variables['video_id_youtube']), 'html' => TRUE));
 
   return $icon;
+}
+
+
+function theme_vid_icon_cove($variables) {
+  $image = '<img src="/' . drupal_get_path('module', 'pbs_tvapi_promos') . '/images/vid-icon.png" width="23" height="13" alt="Watch a preview" title="Watch a preview" />';
+  $video = node_view($variables['cove_node'], $view_mode = 'cove');
+  $video = drupal_render($video);
+
+  $icon = l($image, '', array('attributes' => array('class' => array('open_cove_promo')), 'fragment' => 'promo-' . $variables['count'], 'html' => TRUE, 'external' => TRUE));
+  $icon .= '<div id="promo-' . $variables['count'] . '" class="mfp-hide cove_promo">';
+  $icon .= '<button class="mfp-close" type="button" title="Close (Esc)">×</button>';
+  $icon .= $video;
+  $icon .= '</div>';
+
+  return $icon;
+}
+
+/**
+ * Implements hook_entity_info_alter().
+ *
+ * Creating custom view modes for the different types of promos
+ */
+function pbs_tvapi_promos_entity_info_alter(&$entity_info) {
+  $entity_info['node']['view modes']['cove'] = array(
+    'label' => t('COVE'),
+    'custom settings' => FALSE,
+  );
+}
+
+
+/* EPISODE FINDER WIDGET */
+
+
+/**
+ * AJAX widget to find episode ids by series
+ *
+ * On submit, the markup in the #markup element is updated.
+ */
+function pbs_tvapi_promos_get_episode_ids($form, &$form_state) {
+
+  $form['series_complete'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Select a series:'),
+    '#autocomplete_path' => 'tvseries/autocomplete',
+  );
+  $form['box'] = array(
+    '#type' => 'markup',
+    '#prefix' => '<div id="box">',
+    '#suffix' => '</div>',
+    '#markup' => '',
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#ajax' => array(
+      'callback' => 'pbs_tvapi_promos_submit_driven_callback',
+      'wrapper' => 'box',
+      'name' => 'submit1',
+    ),
+    '#value' => t('Get episodes'),
+  );
+
+  return $form;
+}
+
+/**
+ * Select the 'box' element, change the markup in it, and return it as a
+ * renderable array.
+ *
+ * @return renderable array (the box element)
+ */
+function pbs_tvapi_promos_submit_driven_callback($form, $form_state) {
+
+  // Get the input from the form and extract the NID
+  $series = explode('[nid: ', $form_state['values']['series_complete']);
+  $series = explode(']', $series[1]);
+  $series = $series[0];
+  $output = '';
+  // safety first
+  if (is_numeric($series)) {
+
+    // load the series node
+    $node = node_load($series);
+
+    // initialize array to hold the episode results
+    $ep_ids = array();
+
+    // programs and shows use different methods to get upcoming episodes
+    if (!empty($node->field_program_id['und'][0]['value'])) {
+      $method = 'upcoming/program';
+      $params = $node->field_program_id['und'][0]['value'];
+
+      $scheduledata = pbs_tvapi_call2($method, $params);
+
+      // pull the episode ids and titles into the results array
+      foreach ($scheduledata['upcoming_episodes'] as $i => $episode) {
+        // get airdate dates
+        $airdate = date('m/d/Y g:i a', strtotime($episode['day'] . ' ' . $episode['start_time']));
+
+        $ep_title = $episode['episode_title'];
+        if (empty($episode['episode_title'])) {
+          $ep_title = '[no episode title]';
+        }
+
+        // we only want the first instance of the episode
+        if (!isset($ep_ids[$episode['show_id']])) {
+          $ep_ids[$episode['show_id']] = $episode['show_id'] . ' (' . $ep_title . ' &mdash; ' . $airdate . ' on ' . $episode['feed']['full_name'] . ')';
+        }
+      }
+    }
+    elseif (!empty($node->field_show_id['und'][0]['value'])) {
+      $method = 'upcoming/show';
+      $params = $node->field_show_id['und'][0]['value'];
+
+      $scheduledata = pbs_tvapi_call2($method, $params);
+
+      // pull the episode ids and titles into the results array
+      foreach ($scheduledata['upcoming_shows'] as $i => $episode) {
+        // get airdate dates
+        $airdate = date('m/d/Y g:i a', strtotime($episode['day'] . ' ' . $episode['start_time']));
+        $ep_ids[$params] = $params . ' (' . $node->title . ' &mdash; ' . $airdate . ' on ' . $episode['feed']['full_name'] . ')';
+      }
+    }
+
+    // make sure we have results
+    if (count($ep_ids) > 0) {
+
+      // set up the results list
+      $variables = array(
+        'items' => $ep_ids,
+        'title' => 'Episode IDs',
+        'type' => 'ul',
+        'attributes' => array(),
+      );
+
+      // theme it
+      $output = theme_item_list($variables);
+
+    }
+    else {
+
+      // if no results
+      $output = '<p>This series is not currently in the schedule.</p>';
+
+    }
+
+  // if the NID is not numeric, display an error message
+  }
+  else {
+    $output = '<p>Whoops!  Something went wrong.  Please pick another series.</p>';
+  }
+
+  // alter the form to display the results
+  $element = $form['box'];
+  $element['#markup'] = $output;
+
+  return $element;
+}
+
+/**
+ * autocomplete helper for episode id search
+ * $string = string for search
+ */
+function pbs_tvapi_promos_tvseries_autocomplete($string = '') {
+  $matches = array();
+
+  // searching in database
+  if ($string) {
+
+    // the query
+    $result = db_select('node')
+      ->fields('node', array('title', 'nid'))
+      ->condition(db_and()
+      ->condition('type', 'tv_series')
+      ->condition('title', '%' . db_like($string) . '%', 'LIKE'))
+      ->range(0, 10)
+      ->execute();
+
+
+
+    // insert query results into the $matches array
+
+    foreach ($result as $record) {
+      $matches[$record->title . ' [nid: ' . $record->nid . ']'] = check_plain($record->title);
+    }
+  }
+
+  // output the results to the user
+  drupal_json_output($matches);
+
+}
+
+
+/**
+ * Returns form for finding episode IDs
+ *
+ * @ingroup themeable
+ */
+function theme_episode_finder() {
+  $output = render(drupal_get_form('pbs_tvapi_promos_get_episode_ids'));
+  return $output;
 }
