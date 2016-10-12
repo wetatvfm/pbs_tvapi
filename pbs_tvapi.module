@@ -70,7 +70,8 @@ function pbs_tvapi_get_config() {
  * @params = a string containing the parameter
  */
 function pbs_tvapi_call2($method, $params = NULL, $api_key = NULL, $callsign = NULL) {
-  $baseurl = 'http://services.pbs.org/tvss/';
+  $baseurl = 'http://services.pbs.org';
+  $service = '/tvss/';
 
   // get api key and callsign
   $config = pbs_tvapi_get_config();
@@ -91,37 +92,69 @@ function pbs_tvapi_call2($method, $params = NULL, $api_key = NULL, $callsign = N
 
 
   // construct the API request
-  $url = $baseurl . $callsign . '/' . $method . '/';
+  $url = $baseurl . $service . $callsign . '/' . $method . '/';
   if (!empty($params)) {
     $url .= $params . '/';
   }
 
   // query the API
+  return pbs_tvapi_check($url, $opts, $baseurl);
+}
+
+/**
+ * Error check and process the API call
+ */
+function pbs_tvapi_check($url, $opts, $baseurl, $count = 0) {
+
+  // query the API
   $results = drupal_http_request($url, $opts);
 
-  if ($results->code > 400 ) {
-    drupal_set_message(t('PBS TV Schedule API unable to connect response code: @code', array('@code' => $results->code)), 'error', FALSE);
+  // it worked!
+  if ($results->code >= 200 && $results->code < 300) {
+    // decode JSON
+      if (!empty($results->data)) {
+        $scheduledata = json_decode($results->data, TRUE);
+
+        // if there's an issue, log the error
+        // otherwise return the results
+        if (is_null($scheduledata)) {
+          watchdog('pbs_tvapi', 'Unable to decode the API response.', NULL, WATCHDOG_WARNING);
+          return NULL;
+        }
+        else {
+          return $scheduledata;
+        }
+      }
+      else {
+        watchdog('pbs_tvapi', 'The API response did not include any data.', NULL, WATCHDOG_WARNING);
+        return NULL;
+      }
+  }
+  // bad response
+  elseif ($results->code > 400 ) {
+    watchdog('pbs_tvapi', 'Unable to connect with the API. Response code: %code.', array('%code' => $results->code), WATCHDOG_WARNING);
     return NULL;
   }
-
-  // decode JSON
-  if (!empty($results)) {
-    $scheduledata = json_decode($results->data, TRUE);
-
-    // if there's an issue, display the error
-    // otherwise return the results
-    if (is_null($scheduledata)) {
-      drupal_set_message(t('PBS Schedule API was unable to decode response.'), 'warning', TRUE);
-      return NULL;
+  // redirect
+  elseif ($results->code == '-1002') {
+    // limit the number of redirects to avoid ending up in an infinite loop
+    if ($count < 3) {
+      if (isset($results->redirect_url) && !url_is_external($results->redirect_url)) {
+        watchdog('pbs_tvapi', 'The API call has been redirected from %url to %redirect_url.', array('%url' => $url, '%redirect_url' => $results->redirect_url), WATCHDOG_NOTICE);
+        $url = $baseurl . $results->redirect_url;
+        // try again
+        return pbs_tvapi_check($url, $opts, $count++);
+      }
     }
     else {
-      return $scheduledata;
+      watchdog('pbs_tvapi', 'The API call has been redirected more than three times. The original call was to %url. It is trying to redirect to %redirect_url.', array('%url' => $url, '%redirect_url' => $results->redirect_url), WATCHDOG_WARNING);
+      return NULL;
     }
-  }
-  else {
-    return NULL;
+
+
   }
 }
+
 
 /**
  * Jumping through hoops to create a unique identifier that spans shows
