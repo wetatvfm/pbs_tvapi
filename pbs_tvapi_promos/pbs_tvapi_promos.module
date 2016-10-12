@@ -472,6 +472,7 @@ function pbs_tvapi_promos_tvseries_autocomplete($string = '') {
  * @ingroup themeable
  */
 function theme_episode_finder() {
-  $output = render(drupal_get_form('pbs_tvapi_promos_get_episode_ids'));
+  $form = drupal_get_form('pbs_tvapi_promos_get_episode_ids');
+  $output = render($form);
   return $output;
 }

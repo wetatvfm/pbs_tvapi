@@ -65,6 +65,7 @@ function pbs_tvapi_displays_block_info() {
  * This hook generates the contents of the blocks themselves.
  */
 function pbs_tvapi_displays_block_view($delta = '') {
+  $block = array();
   //The $delta parameter tells us which block is being requested.
   switch ($delta) {
     case 'on_now_26':
