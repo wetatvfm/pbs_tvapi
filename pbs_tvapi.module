@@ -143,7 +143,7 @@ function pbs_tvapi_check($url, $opts, $baseurl, $count = 0) {
         watchdog('pbs_tvapi', 'The API call has been redirected from %url to %redirect_url.', array('%url' => $url, '%redirect_url' => $results->redirect_url), WATCHDOG_NOTICE);
         $url = $baseurl . $results->redirect_url;
         // try again
-        return pbs_tvapi_check($url, $opts, $count++);
+        return pbs_tvapi_check($url, $opts, $baseurl, $count++);
       }
     }
     else {
